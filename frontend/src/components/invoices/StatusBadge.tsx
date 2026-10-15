@@ -157,6 +157,11 @@ const TRIAGE_REASON_CONFIG: Record<
     label: "Low confidence",
     dotColor: "#c8923c",
   },
+  auth_failed: {
+    tone: "red",
+    label: "Failed sender verification",
+    dotColor: "#b91c1c",
+  },
 };
 
 export function TriageReasonBadge({ reason }: { reason: TriageReason }) {

@@ -298,6 +298,22 @@ export function usePromoteFromTriage(id: string) {
  * the triage row when ``triage_reason === 'unknown_sender'`` (or any
  * time the operator wants to mark this vendor as known going forward).
  */
+/**
+ * Reject as suspicious and forward the details to RelentNet. Same
+ * permission rule as reject (admin or assignee).
+ */
+export function useReportInvoice(id: string) {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<Invoice>(`/api/invoices/${id}/report`, { method: "POST" }),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.invoices.detail(id), data);
+      void qc.invalidateQueries({ queryKey: qk.invoices.root() });
+    },
+  });
+}
+
 export function useTrustSenderAndPromote(id: string) {
   const { request } = useApi();
   const qc = useQueryClient();

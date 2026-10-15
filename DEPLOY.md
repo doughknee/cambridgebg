@@ -92,6 +92,11 @@ QBO_DEFAULT_EXPENSE_ACCOUNT_ID=
 # ---- Resend (outbound team-invite emails) ----
 RESEND_API_KEY=<your key>
 RESEND_FROM=Cambridge Invoice Portal <invites@cambridgebg.com>
+
+# ---- "Report as suspicious" → RelentNet Discord (#cambridgebg-reports) ----
+# Channel webhook URL. Leave empty to disable the post; the Report action
+# still rejects the invoice.
+DISCORD_REPORT_WEBHOOK_URL=
 ```
 
 > **IMPORTANT:** `VITE_*` variables are compiled into the frontend bundle at

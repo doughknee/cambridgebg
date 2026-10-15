@@ -33,17 +33,25 @@ inbound email arrives
   ├─ no PDF + has body? ────→ render body to PDF, mark body_rendered, run extraction
   ├─ extraction failed? ────→ EXTRACTION_FAILED (existing status, retry-able, NOT triage)
   └─ extraction succeeded
-       ├─ document_type=invoice + confidence=high ─→ READY_FOR_REVIEW
+       ├─ document_type≠invoice ───────────────────→ NEEDS_TRIAGE (non_invoice)
+       ├─ SPF/DKIM/DMARC hard fail ────────────────→ NEEDS_TRIAGE (auth_failed)
+       ├─ sender not in trusted allowlist ─────────→ NEEDS_TRIAGE (unknown_sender)
        ├─ document_type=invoice + confidence<high ─→ NEEDS_TRIAGE (low_confidence)
-       └─ document_type≠invoice ───────────────────→ NEEDS_TRIAGE (non_invoice)
+       ├─ body_rendered pre-flight ────────────────→ NEEDS_TRIAGE (body_rendered)
+       └─ otherwise ───────────────────────────────→ READY_FOR_REVIEW
 ```
 
 Reasons are checked in priority order:
-`encrypted_pdf > non_invoice > low_confidence > body_rendered > unknown_sender`.
+`encrypted_pdf > non_invoice > auth_failed > unknown_sender > low_confidence > body_rendered`.
 
-The `unknown_sender` reason is a tiebreaker, not a hard gate. A
-high-confidence invoice from any sender goes to the main queue. The
-trust signal is the document content, not the sender.
+**Revised 2026-10-15 (REL-692):** `unknown_sender` and `auth_failed` are
+hard gates. The original design treated the sender as a tiebreaker and
+trusted the document content; a convincing spoofed invoice is exactly
+the case that fails on, so a sender we don't recognise (or one whose
+email failed SPF/DKIM/DMARC) always waits in Triage. Nothing is dropped:
+an admin confirms the sender with one click and it moves to the queue.
+Senders on public mail providers (gmail.com etc.) are trusted by full
+address, never by domain.
 
 ## Data model
 

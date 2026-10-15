@@ -44,6 +44,7 @@ import {
   usePromoteFromTriage,
   useReextractInvoice,
   useRejectInvoice,
+  useReportInvoice,
   useTrustSenderAndPromote,
   useUnapproveInvoice,
   useUnassignInvoice,
@@ -91,6 +92,7 @@ function InvoiceDetailPage() {
   const assign = useAssignInvoice(id);
   const unassign = useUnassignInvoice(id);
   const reject = useRejectInvoice(id);
+  const report = useReportInvoice(id);
   const reextract = useReextractInvoice(id);
   const claim = useClaimInvoice(id);
 
@@ -134,6 +136,7 @@ function InvoiceDetailPage() {
 
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [showNotify, setShowNotify] = useState(false);
   // Human-readable reason the last review action failed (backend 4xx detail).
   const [actionError, setActionError] = useState<string | null>(null);
@@ -281,6 +284,7 @@ function InvoiceDetailPage() {
     assign.isPending ||
     unassign.isPending ||
     reject.isPending ||
+    report.isPending ||
     reextract.isPending ||
     claim.isPending;
 
@@ -384,6 +388,11 @@ function InvoiceDetailPage() {
     setShowRejectModal(false);
   }
 
+  async function handleReport() {
+    await guarded(() => report.mutateAsync());
+    setShowReportModal(false);
+  }
+
   async function handleUnapprove() {
     await guarded(async () => {
       await unapprove.mutateAsync();
@@ -473,6 +482,7 @@ function InvoiceDetailPage() {
         qboConnected={qboConnected}
         isAdmin={isAdmin}
         onReject={() => setShowRejectModal(true)}
+        onReport={() => setShowReportModal(true)}
       >
         {invoice.status === "extraction_failed" && (
           <Button
@@ -615,6 +625,7 @@ function InvoiceDetailPage() {
             pendingPatch.current = null;
           }}
           onReject={() => setShowRejectModal(true)}
+          onReport={() => setShowReportModal(true)}
           onApprove={handleApprove}
           onApproveAndPost={handleApproveAndPost}
           onAssign={() => setAssignFlow(invoice.assigned_to_id ? "reassign" : "assign")}
@@ -658,6 +669,34 @@ function InvoiceDetailPage() {
             loading={reject.isPending}
           >
             Reject
+          </Button>
+        </div>
+      </BottomSheet>
+
+      {/* Report-as-suspicious modal */}
+      <BottomSheet
+        open={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        ariaLabel="Report invoice as suspicious"
+      >
+        <div className="p-6">
+          <h2 className="font-display text-2xl text-navy">Report as suspicious</h2>
+          <p className="text-sm text-slate-600 mt-1">
+            This rejects the invoice and sends the sender, subject, and a link to
+            RelentNet so we can look into it. You don't need to do anything else.
+          </p>
+          {invoice.sender_email && (
+            <p className="mt-3 text-xs text-slate-500">
+              From <span className="font-mono text-graphite">{invoice.sender_email}</span>
+            </p>
+          )}
+        </div>
+        <div className="px-6 py-4 bg-stone/50 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-stone">
+          <Button variant="ghost" onClick={() => setShowReportModal(false)}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={handleReport} loading={report.isPending}>
+            Report and reject
           </Button>
         </div>
       </BottomSheet>
@@ -743,6 +782,7 @@ function StatusBanner({
   qboConnected,
   isAdmin,
   onReject,
+  onReport,
   children,
 }: {
   invoice: Invoice;
@@ -750,6 +790,7 @@ function StatusBanner({
   qboConnected: boolean;
   isAdmin: boolean;
   onReject: () => void;
+  onReport: () => void;
   children?: React.ReactNode;
 }) {
   const base =
@@ -890,7 +931,9 @@ function StatusBanner({
     );
   }
   if (invoice.status === "needs_triage") {
-    return <TriageBanner invoice={invoice} isAdmin={isAdmin} onReject={onReject} />;
+    return (
+      <TriageBanner invoice={invoice} isAdmin={isAdmin} onReject={onReject} onReport={onReport} />
+    );
   }
   return null;
 }
@@ -905,10 +948,12 @@ function TriageBanner({
   invoice,
   isAdmin,
   onReject,
+  onReport,
 }: {
   invoice: Invoice;
   isAdmin: boolean;
   onReject: () => void;
+  onReport: () => void;
 }) {
   const promote = usePromoteFromTriage(invoice.id);
   const trustAndPromote = useTrustSenderAndPromote(invoice.id);
@@ -923,7 +968,9 @@ function TriageBanner({
     non_invoice:
       "Claude classified this as something other than an invoice (statement, quote, order acknowledgement, receipt, or supporting document). If it's actually a real invoice, click Promote to send it to the main queue.",
     unknown_sender:
-      "We don't yet trust this sender's domain. Promote if it's legitimate; click Trust + promote to skip this step for future invoices from the same domain.",
+      "We don't recognise this sender yet. Check the From address against the vendor you expect. Click Trust sender + promote if it's a real vendor, or Report if it looks like a scam.",
+    auth_failed:
+      "This email failed the standard sender checks (SPF/DKIM/DMARC), which is a sign the From address may be forged. Confirm with the vendor by phone before promoting. Report if you didn't expect it.",
     body_rendered:
       "There was no PDF attachment — we rendered the email body as a fallback. Verify the totals and line items extracted correctly before promoting.",
     encrypted_pdf:
@@ -979,9 +1026,14 @@ function TriageBanner({
           Promote to review queue
         </Button>
         {isAdmin && (
-          <Button variant="destructive" size="sm" onClick={onReject} disabled={busy}>
-            Reject
-          </Button>
+          <>
+            <Button variant="destructive" size="sm" onClick={onReject} disabled={busy}>
+              Reject
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onReport} disabled={busy}>
+              Report as suspicious
+            </Button>
+          </>
         )}
       </div>
     </div>
@@ -1051,6 +1103,7 @@ interface FooterProps {
   onSave: () => void;
   onCancelEdit: () => void;
   onReject: () => void;
+  onReport: () => void;
   onApprove: () => void;
   onApproveAndPost: () => void;
   onAssign: () => void;
@@ -1075,6 +1128,7 @@ function ActionFooter(props: FooterProps) {
     onSave,
     onCancelEdit,
     onReject,
+    onReport,
     onApprove,
     onApproveAndPost,
     onAssign,
@@ -1208,6 +1262,12 @@ function ActionFooter(props: FooterProps) {
       onSelect: onReject,
       icon: <XCircleIcon className="h-4 w-4" />,
     });
+    mobileExtraOptions.push({
+      label: "Report as suspicious",
+      description: "Reject and send the details to RelentNet",
+      onSelect: onReport,
+      icon: <ExclamationTriangleIcon className="h-4 w-4" />,
+    });
   }
   if (isReapproving) {
     mobileExtraOptions.push({
@@ -1261,13 +1321,18 @@ function ActionFooter(props: FooterProps) {
             </Button>
           )}
           {rejectVisible && (
-            <Button
-              variant="destructive"
-              onClick={onReject}
-              title="Reject (⌘+Shift+R)"
-            >
-              Reject
-            </Button>
+            <>
+              <Button variant="ghost" onClick={onReport} title="Reject and send to RelentNet">
+                Report
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={onReject}
+                title="Reject (⌘+Shift+R)"
+              >
+                Reject
+              </Button>
+            </>
           )}
           {showEditor && canAct && (
             <Button

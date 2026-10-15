@@ -21,6 +21,38 @@ function initials(source: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
+/**
+ * Who actually sent this email and whether we recognise them. Shown on
+ * every email-sourced invoice, not just triage rows, so the source is
+ * one glance away (REL-692).
+ */
+function SenderLine({ invoice }: { invoice: Invoice }) {
+  const authFailed = /=fail\b/.test(invoice.email_auth ?? "");
+  let verdict: { text: string; className: string } | null = null;
+  if (authFailed) {
+    verdict = { text: "failed sender verification", className: "text-red-300" };
+  } else if (invoice.sender_trusted === true) {
+    verdict = { text: "trusted sender", className: "text-green-300" };
+  } else if (invoice.sender_trusted === false) {
+    verdict = { text: "unknown sender", className: "text-amber" };
+  }
+  return (
+    <div className="mt-1 text-xs text-stone/60 flex flex-wrap items-center gap-x-2">
+      <span className="min-w-0 truncate">
+        From <span className="text-stone font-medium">{invoice.sender_email ?? "unknown address"}</span>
+      </span>
+      {verdict && (
+        <>
+          <span className="text-stone/30">·</span>
+          <span className={`${verdict.className} whitespace-nowrap`} title={invoice.email_auth ?? undefined}>
+            {verdict.text}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function InvoiceIdentityHeader({
   invoice,
   vendorLabel,
@@ -84,6 +116,7 @@ export function InvoiceIdentityHeader({
                   </>
                 )}
               </div>
+              {invoice.source === "email" && <SenderLine invoice={invoice} />}
             </div>
 
             <div className="text-right flex-shrink-0">

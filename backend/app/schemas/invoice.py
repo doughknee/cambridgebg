@@ -63,6 +63,8 @@ class _InvoiceBase(BaseModel):
     source: str
     sender_email: str | None = None
     email_subject: str | None = None
+    # "spf=pass dkim=pass dmarc=fail"; None when the provider sent nothing.
+    email_auth: str | None = None
     received_at: datetime
     pdf_filename: str
     pdf_size_bytes: int
@@ -119,6 +121,9 @@ class InvoiceListItem(_InvoiceBase):
 class InvoiceDetail(_InvoiceBase):
     email_body: str | None = None
     pdf_url: str | None = None
+    # Whether sender_email is in the trusted allowlist. None = not computed
+    # (mutation responses) or not an email-sourced invoice.
+    sender_trusted: bool | None = None
 
 
 class InvoiceListResponse(BaseModel):

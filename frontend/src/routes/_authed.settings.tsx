@@ -1254,6 +1254,8 @@ function TrustedDomainsSection() {
           Senders from these domains skip the "Unknown sender" triage
           path. We auto-populate from your QuickBooks vendor emails on
           every sync — add manual entries here for partners not in QBO.
+          Vendors on Gmail, Yahoo, etc. are trusted by their full address,
+          not their domain.
         </p>
       </CardHeader>
       <CardBody>

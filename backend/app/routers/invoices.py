@@ -34,6 +34,7 @@ from app.schemas.invoice import (
 from app.services import (
     assignment_notify,
     audit,
+    discord_report,
     extraction,
     logto_admin,
     storage,
@@ -129,12 +130,7 @@ async def get_invoice(
     invoice = await session.get(Invoice, invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    detail = InvoiceDetail.model_validate(invoice)
-    try:
-        detail.pdf_url = await storage.presign_url(invoice.pdf_storage_key)
-    except Exception as exc:
-        log.warning("presign_url failed for %s: %s", invoice.id, exc)
-    return detail
+    return await _detail_with_pdf(invoice, session=session)
 
 
 # ---------- PDF (signed URL) ----------
@@ -804,17 +800,12 @@ async def trust_sender_and_promote(
             detail="Invoice has no sender email — can't trust a domain",
         )
 
-    domain = trusted_domains.extract_registrable_domain(invoice.sender_email)
-    if not domain:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Could not parse a domain from {invoice.sender_email!r}",
-        )
-
+    # upsert_manual picks the trust key itself: registrable domain, or
+    # the full address for public mail providers (gmail.com etc).
     try:
         row = await trusted_domains.upsert_manual(
             session,
-            domain=domain,
+            domain=invoice.sender_email,
             actor_id=user.id,
             actor_email=user.email,
             notes=f"Trusted via triage of invoice {invoice_id}",
@@ -845,6 +836,43 @@ async def trust_sender_and_promote(
             message=f"reason={previous_reason} via=trust-sender",
         )
 
+    await session.commit()
+    return await _detail_with_pdf(invoice, session=session)
+
+
+@router.post("/{invoice_id}/report", response_model=InvoiceDetail)
+async def report_invoice(
+    invoice_id: UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Reject as suspicious and forward the details to RelentNet.
+
+    Same permission rule as /reject: admins, or the assignee. The
+    Discord post is best-effort — the rejection stands either way.
+    """
+    invoice = await session.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status == InvoiceStatus.POSTED_TO_QBO:
+        raise HTTPException(status_code=409, detail="Cannot report invoice already posted to QBO")
+    await _ensure_can_reject(invoice, user)
+
+    invoice.status = InvoiceStatus.REJECTED
+    invoice.reviewed_by = user.id
+    invoice.reviewed_by_email = user.email
+    invoice.reviewed_at = datetime.now(UTC)
+    invoice.notes = f"{invoice.notes or ''}\n\n[Reported as suspicious] by {user.email}".strip()
+
+    posted = await discord_report.post_report(invoice, reporter_email=user.email)
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="invoice_reported",
+        invoice_id=invoice_id,
+        message=f"from={invoice.sender_email} auth={invoice.email_auth} discord={'sent' if posted else 'not_sent'}",
+    )
     await session.commit()
     return await _detail_with_pdf(invoice)
 
@@ -881,12 +909,18 @@ async def _safe_page_count(content: bytes) -> int | None:
     return await asyncio.to_thread(_count)
 
 
-async def _detail_with_pdf(invoice: Invoice) -> InvoiceDetail:
+async def _detail_with_pdf(
+    invoice: Invoice, *, session: AsyncSession | None = None
+) -> InvoiceDetail:
     detail = InvoiceDetail.model_validate(invoice)
     try:
         detail.pdf_url = await storage.presign_url(invoice.pdf_storage_key)
     except Exception as exc:  # noqa: BLE001
         log.warning("presign_url failed for %s: %s", invoice.id, exc)
+    # Only the GET endpoint pays for the allowlist lookup; mutation
+    # responses leave it None and the page refetches.
+    if session is not None and invoice.source == "email":
+        detail.sender_trusted = await trusted_domains.is_trusted(session, invoice.sender_email)
     return detail
 
 

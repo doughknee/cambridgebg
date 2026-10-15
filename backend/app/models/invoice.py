@@ -57,7 +57,8 @@ class TriageReason(str, enum.Enum):
     """Why an invoice landed in NEEDS_TRIAGE rather than READY_FOR_REVIEW.
 
     Priority order (when multiple apply, the most actionable one wins):
-    encrypted_pdf > non_invoice > low_confidence > body_rendered > unknown_sender.
+    encrypted_pdf > non_invoice > auth_failed > unknown_sender >
+    low_confidence > body_rendered.
     """
 
     NON_INVOICE = "non_invoice"
@@ -65,6 +66,8 @@ class TriageReason(str, enum.Enum):
     BODY_RENDERED = "body_rendered"
     ENCRYPTED_PDF = "encrypted_pdf"
     LOW_CONFIDENCE = "low_confidence"
+    # SPF/DKIM/DMARC reported a hard fail on the inbound email.
+    AUTH_FAILED = "auth_failed"
 
 
 class Invoice(Base):
@@ -93,6 +96,9 @@ class Invoice(Base):
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Summary of the inbound email's Authentication-Results header, e.g.
+    # "spf=pass dkim=pass dmarc=fail". NULL when the provider sent none.
+    email_auth: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # PDF
     pdf_storage_key: Mapped[str] = mapped_column(String(512), nullable=False)

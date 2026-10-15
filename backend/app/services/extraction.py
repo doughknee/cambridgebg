@@ -46,7 +46,7 @@ from app.models.invoice import DocumentType, Invoice, InvoiceStatus, TriageReaso
 from app.models.vendor import Vendor
 from app.prompts.invoice_extraction import EXTRACTION_PROMPT
 from app.schemas.invoice import ExtractedFields
-from app.services import audit, storage
+from app.services import audit, email_auth, storage, trusted_domains
 
 log = logging.getLogger(__name__)
 
@@ -162,12 +162,15 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
     invoice.approver = fields.approver
     invoice.document_type = fields.document_type
 
-    # Routing decision — only high-confidence invoices skip triage.
+    # Routing decision — only high-confidence invoices from recognised,
+    # authenticated senders skip triage.
     # See spec: docs/superpowers/specs/2026-04-30-email-triage-design.md.
-    # If the webhook pre-flight already set a triage_reason (e.g.
-    # body_rendered, unknown_sender), preserve it but only use it as a
-    # tiebreaker — content classification wins.
-    next_status, next_reason = _route_after_extraction(invoice, fields)
+    sender_trusted = invoice.source != "email" or await trusted_domains.is_trusted(
+        session, invoice.sender_email
+    )
+    next_status, next_reason = _route_after_extraction(
+        invoice, fields, sender_trusted=sender_trusted
+    )
     invoice.status = next_status
     invoice.triage_reason = next_reason
 
@@ -210,42 +213,36 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
 
 
 def _route_after_extraction(
-    invoice: Invoice, fields: ExtractedFields
+    invoice: Invoice, fields: ExtractedFields, *, sender_trusted: bool
 ) -> tuple[InvoiceStatus, TriageReason | None]:
     """Decide where the invoice goes after a successful extraction.
 
     Routing precedence (most-actionable reason wins when multiple apply):
 
-      1. Webhook pre-flight may have already set ``triage_reason`` to
-         BODY_RENDERED or UNKNOWN_SENDER. That stays as the reason
-         **only if** content classification doesn't override it.
-      2. document_type != INVOICE  → NEEDS_TRIAGE / NON_INVOICE
-         (overrides any pre-flight reason — content trumps source).
-      3. document_type == INVOICE + confidence != "high"
-         → NEEDS_TRIAGE / LOW_CONFIDENCE
-      4. document_type == INVOICE + confidence == "high"
-         → keep any pre-flight triage reason (BODY_RENDERED,
-         UNKNOWN_SENDER) → NEEDS_TRIAGE; otherwise → READY_FOR_REVIEW.
-         Per the design, a high-confidence invoice from an unknown
-         sender DOES go to the main queue (sender is a tiebreaker,
-         not a hard gate), so UNKNOWN_SENDER alone gets cleared.
+      1. document_type != INVOICE  → NEEDS_TRIAGE / NON_INVOICE
+      2. SPF/DKIM/DMARC hard fail  → NEEDS_TRIAGE / AUTH_FAILED
+      3. sender not in allowlist   → NEEDS_TRIAGE / UNKNOWN_SENDER
+         (hard gate since REL-692 — a convincing fake is exactly the
+         case "trust the content" fails on)
+      4. confidence != "high"      → NEEDS_TRIAGE / LOW_CONFIDENCE
+      5. pre-flight BODY_RENDERED  → NEEDS_TRIAGE / BODY_RENDERED
+      6. otherwise                 → READY_FOR_REVIEW
     """
-    pre_flight_reason = invoice.triage_reason
-
-    # Content-based override: doc isn't an invoice at all.
     if fields.document_type != DocumentType.INVOICE:
         return InvoiceStatus.NEEDS_TRIAGE, TriageReason.NON_INVOICE
 
-    # Invoice but low confidence — needs human eyes.
+    if email_auth.is_failed(invoice.email_auth):
+        return InvoiceStatus.NEEDS_TRIAGE, TriageReason.AUTH_FAILED
+
+    if not sender_trusted:
+        return InvoiceStatus.NEEDS_TRIAGE, TriageReason.UNKNOWN_SENDER
+
     if fields.confidence != "high":
         return InvoiceStatus.NEEDS_TRIAGE, TriageReason.LOW_CONFIDENCE
 
-    # High-confidence invoice. Body-rendered docs still ride through
-    # triage so AP can confirm we read the email body correctly. An
-    # unknown sender alone doesn't trigger triage when content is
-    # clearly a confident invoice — the spec calls this out
-    # explicitly.
-    if pre_flight_reason == TriageReason.BODY_RENDERED:
+    # Body-rendered docs still ride through triage so AP can confirm we
+    # read the email body correctly.
+    if invoice.triage_reason == TriageReason.BODY_RENDERED:
         return InvoiceStatus.NEEDS_TRIAGE, TriageReason.BODY_RENDERED
 
     return InvoiceStatus.READY_FOR_REVIEW, None

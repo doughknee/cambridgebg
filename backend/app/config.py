@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # ``whsec_`` prefix.
     resend_webhook_secret: str = ""
 
+    # Discord channel webhook that receives "Report as suspicious" posts.
+    # Empty → the Report action still rejects the invoice, just no post.
+    discord_report_webhook_url: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in {"production", "prod"}

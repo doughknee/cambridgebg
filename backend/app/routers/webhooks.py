@@ -31,6 +31,7 @@ from app.db import get_session
 from app.models.invoice import Invoice, InvoiceStatus, TriageReason
 from app.services import (
     audit,
+    email_auth,
     email_render,
     extraction,
     pdf_inspect,
@@ -112,6 +113,7 @@ async def postmark_inbound(
         body_html=body_html,
         received_at=received_at,
         attachments=attachments,
+        auth=email_auth.summarize(payload.get("Headers")),
     )
 
 
@@ -218,6 +220,7 @@ async def resend_inbound_webhook(
         body_html=content.html,
         received_at=received_at,
         attachments=attachments,
+        auth=email_auth.summarize(content.headers),
     )
 
 
@@ -247,11 +250,13 @@ async def _process_inbound_email(
     body_html: str | None,
     received_at: datetime,
     attachments: list[tuple[str, bytes]],
+    auth: str | None = None,
 ) -> dict[str, Any]:
     """Run a normalized inbound email through the ingestion pipeline.
 
     ``provider`` is just for logging — the routing logic is identical
-    across providers.
+    across providers. ``auth`` is the SPF/DKIM/DMARC summary (see
+    ``email_auth.summarize``); extraction routes hard fails to triage.
     """
     body = body_text or body_html
 
@@ -269,6 +274,7 @@ async def _process_inbound_email(
                 body_text=body_text,
                 body_html=body_html,
                 received_at=received_at,
+                auth=auth,
             )
         return await _record_rejected_no_pdf(
             session=session,
@@ -296,6 +302,7 @@ async def _process_inbound_email(
             received_at=received_at,
             filename=filename,
             content=content,
+            auth=auth,
         )
         if invoice_id:
             created.append(str(invoice_id))
@@ -321,6 +328,7 @@ async def _ingest_pdf_attachment(
     received_at: datetime,
     filename: str,
     content: bytes,
+    auth: str | None = None,
 ) -> UUID | None:
     """Upload one PDF, classify, and (if appropriate) queue extraction.
 
@@ -365,6 +373,7 @@ async def _ingest_pdf_attachment(
             email_subject=subject,
             email_body=body,
             email_message_id=dedup_id,
+            email_auth=auth,
             received_at=received_at,
             pdf_storage_key=key,
             pdf_filename=filename,
@@ -394,6 +403,7 @@ async def _ingest_pdf_attachment(
         email_subject=subject,
         email_body=body,
         email_message_id=dedup_id,
+        email_auth=auth,
         received_at=received_at,
         pdf_storage_key=key,
         pdf_filename=filename,
@@ -407,7 +417,7 @@ async def _ingest_pdf_attachment(
         session,
         action="email_received",
         invoice_id=invoice_id,
-        message=f"from={sender} subject={subject!r} filename={filename}",
+        message=f"from={sender} auth={auth} subject={subject!r} filename={filename}",
     )
     background.add_task(extraction.extract_invoice, invoice_id)
     return invoice_id
@@ -424,6 +434,7 @@ async def _ingest_body_only(
     body_text: str | None,
     body_html: str | None,
     received_at: datetime,
+    auth: str | None = None,
 ) -> dict[str, Any]:
     """Render the email body to a PDF and treat it as a normal inbound.
 
@@ -483,6 +494,7 @@ async def _ingest_body_only(
         email_subject=subject,
         email_body=body,
         email_message_id=message_id,
+        email_auth=auth,
         received_at=received_at,
         pdf_storage_key=key,
         pdf_filename=filename,
@@ -501,7 +513,7 @@ async def _ingest_body_only(
         session,
         action="email_received",
         invoice_id=invoice_id,
-        message=f"from={sender} subject={subject!r} filename={filename} (body-rendered)",
+        message=f"from={sender} auth={auth} subject={subject!r} filename={filename} (body-rendered)",
     )
     background.add_task(extraction.extract_invoice, invoice_id)
     await session.commit()

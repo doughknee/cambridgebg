@@ -23,7 +23,8 @@ export type TriageReason =
   | "unknown_sender"
   | "body_rendered"
   | "encrypted_pdf"
-  | "low_confidence";
+  | "low_confidence"
+  | "auth_failed";
 
 export interface LineItem {
   description: string;
@@ -40,6 +41,10 @@ export interface Invoice {
   sender_email: string | null;
   email_subject: string | null;
   email_body: string | null;
+  /** "spf=pass dkim=pass dmarc=fail"; null when the provider sent nothing. */
+  email_auth: string | null;
+  /** Sender is in the trusted allowlist. Only populated on GET detail. */
+  sender_trusted?: boolean | null;
   received_at: string;
   pdf_filename: string;
   pdf_size_bytes: number;

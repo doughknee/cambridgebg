@@ -1,10 +1,14 @@
 """Logic around the email-domain allowlist.
 
-The allowlist powers the ``unknown_sender`` triage signal. We *don't*
-hard-gate on it (per the design — high-confidence invoices from
-unknown senders still go to the main queue), so this service is mostly
-about computing whether a given sender's domain is recognised, plus
-keeping the table populated as QBO vendors come and go.
+The allowlist powers the ``unknown_sender`` triage gate: an email from
+a sender we don't recognise lands in Triage no matter how confident
+extraction was (REL-692). This service computes whether a sender is
+recognised and keeps the table populated as QBO vendors come and go.
+
+Senders on public mail providers (gmail.com, yahoo.com, …) are trusted
+by *full address*, never by domain — otherwise trusting one Gmail
+vendor would trust every scammer on Gmail. ``trust_key`` picks the
+right form; the table's ``domain`` column stores whichever it is.
 
 Domain extraction uses a "registrable form" (eTLD+1) heuristic so
 ``billing.silvercote.com`` and ``accountspayable@silvercote.com`` both
@@ -55,6 +59,36 @@ _TWO_PART_SUFFIXES = frozenset(
 )
 
 
+# Shared mailbox providers: a domain match here means nothing, so these
+# senders are trusted one address at a time.
+PUBLIC_MAIL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "yahoo.com",
+        "ymail.com",
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "msn.com",
+        "aol.com",
+        "icloud.com",
+        "me.com",
+        "mac.com",
+        "protonmail.com",
+        "proton.me",
+        "mail.com",
+        "comcast.net",
+        "att.net",
+        "sbcglobal.net",
+        "bellsouth.net",
+        "verizon.net",
+        "cox.net",
+        "charter.net",
+        "earthlink.net",
+    }
+)
+
 _EMAIL_RE = re.compile(r"<([^>]+@[^>]+)>")
 
 
@@ -97,13 +131,30 @@ def extract_registrable_domain(email_or_host: str | None) -> str | None:
     return last_two
 
 
-async def is_trusted(session: AsyncSession, sender: str | None) -> bool:
-    """True when the sender's registrable domain is in the allowlist."""
+def trust_key(sender: str | None) -> str | None:
+    """What we store/look up for this sender: its registrable domain, or
+    the full lowercase address when the domain is a public mail provider.
+
+      "billing@silvercote.com" → "silvercote.com"
+      "bob@gmail.com"          → "bob@gmail.com"
+      "gmail.com"              → None  (can't trust a whole public provider)
+    """
     domain = extract_registrable_domain(sender)
     if not domain:
+        return None
+    if domain not in PUBLIC_MAIL_DOMAINS:
+        return domain
+    raw = _strip_email_address_from_string(sender or "").strip().lower()
+    return raw if "@" in raw else None
+
+
+async def is_trusted(session: AsyncSession, sender: str | None) -> bool:
+    """True when the sender's trust key is in the allowlist."""
+    key = trust_key(sender)
+    if not key:
         return False
     row = await session.execute(
-        select(TrustedSenderDomain.id).where(TrustedSenderDomain.domain == domain)
+        select(TrustedSenderDomain.id).where(TrustedSenderDomain.domain == key)
     )
     return row.first() is not None
 
@@ -132,8 +183,13 @@ async def upsert_manual(
     to mark domains added through the triage UI's "Trust sender"
     action so we can tell them apart in the Settings list.
     """
-    canonical = extract_registrable_domain(domain)
+    canonical = trust_key(domain)
     if not canonical:
+        if extract_registrable_domain(domain) in PUBLIC_MAIL_DOMAINS:
+            raise ValueError(
+                f"{domain!r} is a public mail provider — trust the vendor's "
+                "full email address instead (e.g. name@gmail.com)."
+            )
         raise ValueError(f"Not a valid email domain: {domain!r}")
 
     existing = await session.scalar(
@@ -203,7 +259,7 @@ async def sync_from_vendor_emails(session: AsyncSession) -> dict[str, int]:
     ).all()
     desired: dict[str, UUID] = {}
     for vendor_id, email in vendors:
-        domain = extract_registrable_domain(email)
+        domain = trust_key(email)
         if not domain:
             continue
         # First-write-wins so we keep a stable backref across syncs.

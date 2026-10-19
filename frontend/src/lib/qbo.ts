@@ -60,6 +60,37 @@ export function useSyncProjects() {
   });
 }
 
+export function useSyncItems() {
+  const { request } = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      request<{ items: number; mapped: number; unmapped: number }>("/api/qbo/sync/items", {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.codingOptions.root() });
+    },
+  });
+}
+
+export interface QboItem {
+  id: string;
+  name: string;
+  fully_qualified_name: string;
+}
+
+/** Active QBO Products/Services, for mapping cost codes on Settings. */
+export function useQboItems(enabled = true) {
+  const { request } = useApi();
+  return useQuery({
+    queryKey: [...qk.qbo.root(), "items"],
+    queryFn: () => request<{ items: QboItem[] }>("/api/qbo/items"),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export interface QboExpenseAccount {
   id: string;
   name: string;

@@ -120,6 +120,11 @@ async def patch_coding_option(
         ) or None
     if "active" in updates and updates["active"] is not None:
         option.active = updates["active"]
+    if "qbo_item_id" in updates:
+        option.qbo_item_id = updates["qbo_item_id"] or None
+        option.qbo_item_name = (
+            updates.get("qbo_item_name") or None if option.qbo_item_id else None
+        )
 
     try:
         await session.flush()

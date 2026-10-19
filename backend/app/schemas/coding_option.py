@@ -20,6 +20,8 @@ class CodingOptionOut(BaseModel):
     value: str
     label: str | None = None
     active: bool
+    qbo_item_id: str | None = None
+    qbo_item_name: str | None = None
 
 
 class CodingOptionListResponse(BaseModel):
@@ -44,3 +46,6 @@ class CodingOptionPatch(BaseModel):
     value: str | None = Field(default=None, min_length=1, max_length=128)
     label: str | None = Field(default=None, max_length=256)
     active: bool | None = None
+    # Send both together (from the QBO item picker); null clears the mapping.
+    qbo_item_id: str | None = Field(default=None, max_length=64)
+    qbo_item_name: str | None = Field(default=None, max_length=256)

@@ -25,10 +25,13 @@ import {
   useConnectQbo,
   useDisconnectQbo,
   useExpenseAccounts,
+  useQboItems,
   useQboStatus,
+  useSyncItems,
   useSyncProjects,
   useSyncVendors,
   useUpdateQboSettings,
+  type QboItem,
 } from "@/lib/qbo";
 import {
   FIELD_LABELS,
@@ -88,6 +91,7 @@ function SettingsPage() {
   const disconnect = useDisconnectQbo();
   const syncVendors = useSyncVendors();
   const syncProjects = useSyncProjects();
+  const syncItems = useSyncItems();
   const updateSettings = useUpdateQboSettings();
   const navigate = useNavigate();
 
@@ -252,6 +256,18 @@ function SettingsPage() {
                         <ArrowPathIcon className="h-4 w-4" />
                         Sync projects{" "}
                         {syncProjects.data && `(${syncProjects.data.count})`}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => syncItems.mutate()}
+                        loading={syncItems.isPending}
+                        title="Match cost codes to QBO Products/Services by name"
+                      >
+                        <ArrowPathIcon className="h-4 w-4" />
+                        Sync items{" "}
+                        {syncItems.data &&
+                          `(${syncItems.data.mapped} mapped, ${syncItems.data.unmapped} unmapped)`}
                       </Button>
                       <Button
                         variant="secondary"
@@ -870,6 +886,8 @@ function APCodingSection() {
   const grouped = groupByField(
     (data?.options ?? []).filter((o) => o.active || canManage),
   );
+  const qbo = useQboStatus();
+  const items = useQboItems(canManage && (qbo.data?.connected ?? false));
 
   return (
     <Card accent="left" id="coding" className="scroll-mt-6">
@@ -900,6 +918,7 @@ function APCodingSection() {
                 description={f.description}
                 options={grouped[f.key]}
                 loading={isLoading}
+                items={f.key === "cost_code" ? items.data?.items : undefined}
               />
             ))}
           </div>
@@ -914,13 +933,17 @@ function FieldGroup({
   description,
   options,
   loading,
+  items,
 }: {
   field: CodingField;
   description: string;
   options: CodingOption[];
   loading: boolean;
+  /** cost_code only: QBO Products/Services to map each code to. */
+  items?: QboItem[];
 }) {
   const create = useCreateCodingOption();
+  const unmapped = field === "cost_code" ? options.filter((o) => !o.qbo_item_id).length : 0;
   const [adding, setAdding] = useState(false);
   const [newValue, setNewValue] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -958,6 +981,13 @@ function FieldGroup({
         <div>
           <SectionLabel>{FIELD_LABELS[field]}</SectionLabel>
           <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+          {field === "cost_code" && options.length > 0 && (
+            <p className={unmapped ? "text-xs text-amber-700 mt-0.5" : "text-xs text-slate-500 mt-0.5"}>
+              {unmapped
+                ? `${unmapped} not mapped to a QBO item — those bills post to the default expense account.`
+                : "All cost codes map to a QBO Product/Service."}
+            </p>
+          )}
         </div>
         {!adding && (
           <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>
@@ -1019,7 +1049,7 @@ function FieldGroup({
       {options.length > 0 && (
         <ul className="divide-y divide-stone/60 border border-stone/60">
           {options.map((opt) => (
-            <CodingOptionRow key={opt.id} option={opt} />
+            <CodingOptionRow key={opt.id} option={opt} items={items} />
           ))}
         </ul>
       )}
@@ -1027,7 +1057,7 @@ function FieldGroup({
   );
 }
 
-function CodingOptionRow({ option }: { option: CodingOption }) {
+function CodingOptionRow({ option, items }: { option: CodingOption; items?: QboItem[] }) {
   const patch = usePatchCodingOption();
   const del = useDeleteCodingOption();
   const [editing, setEditing] = useState(false);
@@ -1046,6 +1076,17 @@ function CodingOptionRow({ option }: { option: CodingOption }) {
     await patch.mutateAsync({
       id: option.id,
       patch: { active: !option.active },
+    });
+  }
+
+  async function setItem(id: string) {
+    const item = items?.find((i) => i.id === id);
+    await patch.mutateAsync({
+      id: option.id,
+      patch: {
+        qbo_item_id: item?.id ?? null,
+        qbo_item_name: item?.fully_qualified_name ?? null,
+      },
     });
   }
 
@@ -1119,6 +1160,40 @@ function CodingOptionRow({ option }: { option: CodingOption }) {
         </div>
         {option.label && (
           <div className="text-xs text-slate-500 truncate">{option.label}</div>
+        )}
+        {option.field === "cost_code" && (
+          <div className="mt-1 flex items-center gap-2">
+            {items ? (
+              <select
+                value={option.qbo_item_id ?? ""}
+                onChange={(e) => void setItem(e.target.value)}
+                disabled={patch.isPending}
+                aria-label={`QBO item for ${option.value}`}
+                className="max-w-full border border-slate-300 bg-stone/50 text-xs text-graphite p-1 disabled:opacity-60"
+              >
+                <option value="">Not mapped (default expense account)</option>
+                {option.qbo_item_id &&
+                  !items.some((i) => i.id === option.qbo_item_id) && (
+                    <option value={option.qbo_item_id}>
+                      {option.qbo_item_name ?? option.qbo_item_id} (not in QBO)
+                    </option>
+                  )}
+                {items.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.fully_qualified_name}
+                  </option>
+                ))}
+              </select>
+            ) : option.qbo_item_id ? (
+              <span className="text-xs text-slate-500 truncate">
+                QBO item: {option.qbo_item_name ?? option.qbo_item_id}
+              </span>
+            ) : (
+              <span className="text-[10px] uppercase tracking-wider text-amber-700">
+                Unmapped
+              </span>
+            )}
+          </div>
         )}
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">

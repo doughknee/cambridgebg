@@ -1,13 +1,15 @@
-"""Sync vendors and projects (Customers or Classes) from QBO to local DB."""
+"""Sync vendors, projects (Customers or Classes) and items from QBO to local DB."""
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.coding_option import CodingOption
 from app.models.project import Project
 from app.models.qbo_token import QboToken
 from app.models.vendor import Vendor
@@ -145,6 +147,98 @@ async def sync_projects(session: AsyncSession) -> int:
     await session.flush()
     log.info("Synced %d projects (%s) from QBO", count, qbo_type)
     return count
+
+
+# ---------- Items (Products/Services) -> cost codes ----------
+
+
+async def fetch_items(session: AsyncSession) -> list[dict[str, Any]]:
+    """Active QBO Items, slimmed to what the picker and the matcher need."""
+    rows = await qbo_client.qbo_query(session, "SELECT * FROM Item")
+    return [
+        {
+            "id": str(r.get("Id")),
+            "name": r.get("Name") or "",
+            "fully_qualified_name": r.get("FullyQualifiedName") or r.get("Name") or "",
+        }
+        for r in rows
+        if r.get("Id") and r.get("Active", True)
+    ]
+
+
+def normalise_code(value: str) -> str:
+    """Fold a cost code for comparison: case, letter-O vs zero, punctuation.
+
+    The Controller's screenshots show ``01-520.0`` (zero) in the portal
+    against ``01-520.O`` (letter O) in QBO, and the portal also carries
+    forms like ``01-520 "O"``. All of those must compare equal.
+    """
+    return re.sub(r"[^a-z0-9]", "", value.lower().replace("o", "0"))
+
+
+def match_item(value: str, items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick the item whose Name matches a cost code, or None.
+
+    Exact (normalised) match wins; otherwise a unique prefix match, since
+    QBO item names carry a description after the code ("01-520.O Temp
+    Toilet"). Ambiguous prefixes are logged and skipped rather than guessed.
+    """
+    key = normalise_code(value)
+    if len(key) < 3:
+        return None
+    exact = [i for i in items if normalise_code(i["name"]) == key]
+    if len(exact) == 1:
+        return exact[0]
+    prefix = exact or [i for i in items if normalise_code(i["name"]).startswith(key)]
+    if len(prefix) == 1:
+        return prefix[0]
+    if prefix:
+        log.warning(
+            "Cost code %r matches %d QBO items, not mapping: %s",
+            value,
+            len(prefix),
+            [i["fully_qualified_name"] for i in prefix],
+        )
+    return None
+
+
+async def sync_items(session: AsyncSession) -> dict[str, int]:
+    """Map cost-code options to QBO Items by name.
+
+    Only fills rows that have no mapping yet (manual picks in Settings are
+    never overwritten); already-mapped rows just get their display name
+    refreshed. Returns counts for the UI.
+    """
+    items = await fetch_items(session)
+    by_id = {i["id"]: i for i in items}
+    rows = (
+        await session.execute(select(CodingOption).where(CodingOption.field == "cost_code"))
+    ).scalars().all()
+    mapped = unmapped = 0
+    for row in rows:
+        if row.qbo_item_id:
+            if row.qbo_item_id in by_id:
+                row.qbo_item_name = by_id[row.qbo_item_id]["fully_qualified_name"]
+            else:
+                log.warning(
+                    "Cost code %r is mapped to QBO item %s, which is gone or inactive",
+                    row.value,
+                    row.qbo_item_id,
+                )
+        else:
+            item = match_item(row.value, items)
+            if item:
+                row.qbo_item_id = item["id"]
+                row.qbo_item_name = item["fully_qualified_name"]
+        if row.qbo_item_id:
+            mapped += 1
+        else:
+            unmapped += 1
+    await session.flush()
+    log.info(
+        "Item sync: %d QBO items, %d cost codes mapped, %d unmapped", len(items), mapped, unmapped
+    )
+    return {"items": len(items), "mapped": mapped, "unmapped": unmapped}
 
 
 async def _deactivate_missing_vendors(

@@ -57,6 +57,12 @@ class CodingOption(Base):
     # available for historical-record lookup.
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # cost_code rows only: the QBO Product/Service (Item) this code posts to.
+    # Filled by the item sync (name match) or picked manually in Settings.
+    # Null means the bill line falls back to the default expense account.
+    qbo_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    qbo_item_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
     __table_args__ = (
         # Lock down `field` to the three discriminator values.
         CheckConstraint(

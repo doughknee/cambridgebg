@@ -219,6 +219,9 @@ export interface CodingOption {
   value: string;
   label: string | null;
   active: boolean;
+  /** cost_code only: the QBO Product/Service bill lines post to. Null = default expense account. */
+  qbo_item_id: string | null;
+  qbo_item_name: string | null;
 }
 
 export interface CodingOptionListResponse {

@@ -60,6 +60,8 @@ export interface PatchCodingOptionPayload {
   value?: string;
   label?: string | null;
   active?: boolean;
+  qbo_item_id?: string | null;
+  qbo_item_name?: string | null;
 }
 
 export function usePatchCodingOption() {

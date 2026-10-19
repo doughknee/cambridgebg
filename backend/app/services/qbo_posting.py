@@ -19,11 +19,12 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import AsyncSessionLocal
+from app.models.coding_option import CodingOption
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.project import Project
 from app.models.qbo_token import QboToken
@@ -83,7 +84,8 @@ async def _run(session: AsyncSession, invoice_id: UUID) -> None:
         raise qbo_client.QboNotConnectedError("QBO is not connected")
 
     default_account_id = _default_expense_account_id(token)
-    payload = _build_bill_payload(invoice, vendor, project, default_account_id)
+    item_id = await _resolve_item_id(session, invoice)
+    payload = _build_bill_payload(invoice, vendor, project, default_account_id, item_id)
 
     # Create the Bill (skip if we already have one from a previous attempt)
     if not invoice.qbo_bill_id:
@@ -189,6 +191,29 @@ async def _resolve_project(session: AsyncSession, invoice: Invoice) -> Project |
     return project
 
 
+async def _resolve_item_id(session: AsyncSession, invoice: Invoice) -> str | None:
+    """QBO Item for the invoice's cost code, via the mapped CodingOption.
+
+    None (no cost code, unknown code, or code not mapped yet) means the
+    bill line falls back to the default expense account.
+    """
+    code = (invoice.cost_code or "").strip()
+    if not code:
+        return None
+    row = (
+        await session.execute(
+            select(CodingOption).where(
+                CodingOption.field == "cost_code",
+                func.lower(CodingOption.value) == code.lower(),
+            )
+        )
+    ).scalars().first()
+    if row is None or not row.qbo_item_id:
+        log.info("Cost code %r has no QBO item mapping; posting to default account", code)
+        return None
+    return row.qbo_item_id
+
+
 def _default_expense_account_id(token: QboToken) -> str:
     if token.default_expense_account_id:
         return token.default_expense_account_id
@@ -207,10 +232,11 @@ def _build_bill_payload(
     vendor: Vendor,
     project: Project | None,
     default_account_id: str,
+    item_id: str | None = None,
 ) -> dict[str, Any]:
     # If the extractor produced line items, use them; otherwise fall back to a
     # single line item for the full total.
-    line_items = _build_lines(invoice, project, default_account_id)
+    line_items = _build_lines(invoice, project, default_account_id, item_id)
 
     payload: dict[str, Any] = {
         "VendorRef": {"value": vendor.qbo_id},
@@ -234,8 +260,16 @@ def _build_lines(
     invoice: Invoice,
     project: Project | None,
     default_account_id: str,
+    item_id: str | None = None,
 ) -> list[dict[str, Any]]:
     lines: list[dict[str, Any]] = []
+
+    def make_line(amount: float, description: str | None) -> dict[str, Any]:
+        amount = round(amount, 2)
+        line: dict[str, Any] = {"Amount": amount}
+        if description:
+            line["Description"] = description[:4000]
+        return line | _line_detail(project, default_account_id, item_id, amount)
 
     # Use extracted line items when we have useful amounts
     usable = [
@@ -247,14 +281,7 @@ def _build_lines(
         for li in usable:
             amount = (li["amount_cents"] or 0) / 100
             description = (li.get("description") or "").strip() or None
-            line: dict[str, Any] = {
-                "DetailType": "AccountBasedExpenseLineDetail",
-                "Amount": round(amount, 2),
-                "AccountBasedExpenseLineDetail": _line_detail(project, default_account_id),
-            }
-            if description:
-                line["Description"] = description[:4000]
-            lines.append(line)
+            lines.append(make_line(amount, description))
 
         # Extracted lines represent the pre-tax breakdown; tax is tracked
         # separately on the invoice. Append it as its own expense line so
@@ -263,16 +290,7 @@ def _build_lines(
         # captures it too.
         tax = (invoice.tax_cents or 0) / 100
         if tax > 0:
-            lines.append(
-                {
-                    "DetailType": "AccountBasedExpenseLineDetail",
-                    "Amount": round(tax, 2),
-                    "Description": "Sales Tax",
-                    "AccountBasedExpenseLineDetail": _line_detail(
-                        project, default_account_id
-                    ),
-                }
-            )
+            lines.append(make_line(tax, "Sales Tax"))
         return lines
 
     # Fallback: single line for the full total. total_cents already
@@ -280,30 +298,40 @@ def _build_lines(
     total = (invoice.total_cents or 0) / 100
     if total <= 0:
         raise ValueError("Invoice has no total and no line items — can't build Bill")
-    lines.append(
-        {
-            "DetailType": "AccountBasedExpenseLineDetail",
-            "Amount": round(total, 2),
-            "Description": f"Invoice {invoice.invoice_number or invoice.id}",
-            "AccountBasedExpenseLineDetail": _line_detail(project, default_account_id),
-        }
-    )
+    lines.append(make_line(total, f"Invoice {invoice.invoice_number or invoice.id}"))
     return lines
 
 
-def _line_detail(project: Project | None, default_account_id: str) -> dict[str, Any]:
-    """Build the AccountBasedExpenseLineDetail dict for one bill line.
+def _line_detail(
+    project: Project | None,
+    default_account_id: str,
+    item_id: str | None,
+    amount: float,
+) -> dict[str, Any]:
+    """DetailType + detail dict for one bill line.
 
+    With a mapped cost code this is an ItemBasedExpenseLineDetail against the
+    QBO Product/Service (what accounting re-keys by hand today, REL-705);
+    otherwise the account-based line on the default expense account.
     Centralised so every line (including the appended tax line) gets the
-    same project / class allocation.
+    same item / project / class allocation.
     """
-    detail: dict[str, Any] = {"AccountRef": {"value": default_account_id}}
+    if item_id:
+        detail: dict[str, Any] = {
+            "ItemRef": {"value": item_id},
+            "Qty": 1,
+            "UnitPrice": amount,
+        }
+        detail_type = "ItemBasedExpenseLineDetail"
+    else:
+        detail = {"AccountRef": {"value": default_account_id}}
+        detail_type = "AccountBasedExpenseLineDetail"
     if project and project.qbo_type == "Customer":
         detail["CustomerRef"] = {"value": project.qbo_id}
         detail["BillableStatus"] = "NotBillable"
     if project and project.qbo_type == "Class":
         detail["ClassRef"] = {"value": project.qbo_id}
-    return detail
+    return {"DetailType": detail_type, detail_type: detail}
 
 
 def _compose_private_note(invoice: Invoice) -> str:

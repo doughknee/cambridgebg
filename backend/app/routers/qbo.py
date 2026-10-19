@@ -268,6 +268,45 @@ async def sync_projects(
     return {"count": count}
 
 
+@router.post("/sync/items")
+async def sync_items(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Name-match cost-code options to QBO Products/Services."""
+    try:
+        counts = await qbo_sync.sync_items(session)
+    except qbo_client.QboNotConnectedError:
+        raise HTTPException(status_code=400, detail="QBO is not connected") from None
+    except qbo_client.QboApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    await audit.record(
+        session,
+        actor_id=user.id,
+        actor_email=user.email,
+        action="qbo_sync_items",
+        message=f"items={counts['items']} mapped={counts['mapped']} unmapped={counts['unmapped']}",
+    )
+    await session.commit()
+    return counts
+
+
+@router.get("/items")
+async def list_items(
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Active QBO Products/Services for the cost-code item picker on Settings."""
+    try:
+        items = await qbo_sync.fetch_items(session)
+    except qbo_client.QboNotConnectedError:
+        raise HTTPException(status_code=400, detail="QBO is not connected") from None
+    except qbo_client.QboApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"items": sorted(items, key=lambda i: i["fully_qualified_name"])}
+
+
 @router.get("/expense-accounts")
 async def list_expense_accounts(
     _user: Annotated[CurrentUser, Depends(get_current_user)],

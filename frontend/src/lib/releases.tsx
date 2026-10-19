@@ -17,9 +17,12 @@ import {
   DevicePhoneMobileIcon,
   DocumentTextIcon,
   EnvelopeIcon,
+  FlagIcon,
   InboxIcon,
   KeyIcon,
   LinkIcon,
+  ShieldCheckIcon,
+  ShieldExclamationIcon,
   SparklesIcon,
   UserCircleIcon,
 } from "@heroicons/react/24/outline";
@@ -49,6 +52,55 @@ export interface Release {
 }
 
 export const RELEASES: Release[] = [
+  {
+    version: "0.2.6",
+    date: "October 19, 2026",
+    headline: "Fake invoices stay out of your queue",
+    summary:
+      "Invoices from senders the portal doesn't know now wait in Triage, every invoice shows who sent it, and bills post to QuickBooks under the right Product/Service.",
+    sections: [
+      {
+        kind: "new",
+        items: [
+          {
+            Icon: ShieldCheckIcon,
+            title: "Unknown senders wait in Triage",
+            body: "An invoice from an email domain the portal doesn't recognise goes to Triage with an \"Unknown sender\" flag instead of landing next to your regular invoices. One click on Trust sender + promote confirms a real vendor for good. Your QuickBooks vendors are already trusted.",
+          },
+          {
+            Icon: ShieldExclamationIcon,
+            title: "Sender verification",
+            body: "Emails that fail the standard sender checks (SPF, DKIM and DMARC) are flagged \"Failed sender verification\" and held in Triage. This catches the nastier scam where someone pretends to be a vendor you already work with. Nothing is blocked or deleted; a real vendor just waits for your OK.",
+          },
+          {
+            Icon: FlagIcon,
+            title: "Report as suspicious",
+            body: "If an invoice looks like a scam, one click rejects it and sends the sender, subject and a link to RelentNet. Your team doesn't need to investigate or forward anything.",
+          },
+          {
+            Icon: EnvelopeIcon,
+            title: "Who sent it, on every invoice",
+            body: "The sending address, and whether it's a trusted sender, now shows at the top of every emailed invoice, not just the ones in Triage.",
+          },
+        ],
+      },
+      {
+        kind: "improved",
+        items: [
+          {
+            Icon: CheckBadgeIcon,
+            title: "Bills post under the right Product/Service",
+            body: "Each cost code is now matched to its QuickBooks Product/Service, so a posted bill lands under Item details with the right item and project, the way accounting entered them by hand before. Check or change the matches in Settings under Cost code.",
+          },
+          {
+            Icon: UserCircleIcon,
+            title: "Gmail and Yahoo vendors are trusted by address",
+            body: "Trusting a vendor who emails from Gmail, Yahoo or similar now trusts that exact address, never the whole provider.",
+          },
+        ],
+      },
+    ],
+  },
   {
     version: "0.2.5",
     date: "July 24, 2026",

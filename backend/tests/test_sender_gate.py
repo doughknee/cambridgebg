@@ -70,6 +70,18 @@ def test_non_invoice_still_wins() -> None:
     )
 
 
+def test_triage_reason_check_constraint_matches_enum() -> None:
+    """REL-708: a new TriageReason must also widen the DB CHECK constraint."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "0015_triage_reason_auth_failed.py"
+    spec = importlib.util.spec_from_file_location("mig_0015", path)
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)  # type: ignore[union-attr]
+    assert set(mig.TRIAGE_REASON_VALUES) == {m.value for m in TriageReason}
+
+
 # ---- trust key -------------------------------------------------------------
 
 

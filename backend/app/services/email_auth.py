@@ -40,5 +40,15 @@ def summarize(headers: Any) -> str | None:
 
 
 def is_failed(summary: str | None) -> bool:
-    """True only on a hard ``fail`` (softfail / none / neutral don't count)."""
-    return bool(summary) and "=fail" in summary
+    """True only on a hard ``fail``; softfail / none / neutral don't count.
+
+    DMARC is the verdict that matters: it passes when either SPF or DKIM
+    aligns, so ``spf=pass dkim=fail dmarc=pass`` is authenticated mail
+    (REL-709). Only without a DMARC result do SPF/DKIM fails stand alone.
+    """
+    if not summary:
+        return False
+    verdicts = dict(part.split("=", 1) for part in summary.split() if "=" in part)
+    if "dmarc" in verdicts:
+        return verdicts["dmarc"] == "fail"
+    return "fail" in (verdicts.get("spf"), verdicts.get("dkim"))

@@ -111,6 +111,11 @@ def test_summarize_resend_dict_and_postmark_list() -> None:
     assert email_auth.is_failed("spf=softfail dkim=none") is False
     assert email_auth.is_failed("spf=pass dmarc=fail") is True
     assert email_auth.is_failed(None) is False
+    # DMARC decides when present (REL-709: the real Swinglift case).
+    assert email_auth.is_failed("spf=pass dkim=fail dmarc=pass") is False
+    assert email_auth.is_failed("spf=fail dkim=fail dmarc=pass") is False
+    # Without DMARC, a hard SPF/DKIM fail still counts.
+    assert email_auth.is_failed("spf=fail dkim=pass") is True
 
 
 # ---- report endpoint -------------------------------------------------------

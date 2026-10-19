@@ -27,7 +27,11 @@ function initials(source: string): string {
  * one glance away (REL-692).
  */
 function SenderLine({ invoice }: { invoice: Invoice }) {
-  const authFailed = /=fail\b/.test(invoice.email_auth ?? "");
+  // Mirrors backend email_auth.is_failed: DMARC decides when present.
+  const auth = invoice.email_auth ?? "";
+  const authFailed = /\bdmarc=/.test(auth)
+    ? /\bdmarc=fail\b/.test(auth)
+    : /\b(spf|dkim)=fail\b/.test(auth);
   let verdict: { text: string; className: string } | null = null;
   if (authFailed) {
     verdict = { text: "failed sender verification", className: "text-red-300" };

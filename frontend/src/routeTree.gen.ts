@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as MarketingRouteImport } from './routes/marketing'
 import { Route as InviteRouteImport } from './routes/invite'
 import { Route as EulaRouteImport } from './routes/eula'
 import { Route as CallbackRouteImport } from './routes/callback'
@@ -26,6 +27,11 @@ import { Route as AuthedInvoicesIdRouteImport } from './routes/_authed.invoices_
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketingRoute = MarketingRouteImport.update({
+  id: '/marketing',
+  path: '/marketing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InviteRoute = InviteRouteImport.update({
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/callback': typeof CallbackRoute
   '/eula': typeof EulaRoute
   '/invite': typeof InviteRoute
+  '/marketing': typeof MarketingRoute
   '/privacy': typeof PrivacyRoute
   '/audit': typeof AuthedAuditRoute
   '/invoices': typeof AuthedInvoicesRoute
@@ -107,6 +114,7 @@ export interface FileRoutesByTo {
   '/callback': typeof CallbackRoute
   '/eula': typeof EulaRoute
   '/invite': typeof InviteRoute
+  '/marketing': typeof MarketingRoute
   '/privacy': typeof PrivacyRoute
   '/audit': typeof AuthedAuditRoute
   '/invoices': typeof AuthedInvoicesRoute
@@ -123,6 +131,7 @@ export interface FileRoutesById {
   '/callback': typeof CallbackRoute
   '/eula': typeof EulaRoute
   '/invite': typeof InviteRoute
+  '/marketing': typeof MarketingRoute
   '/privacy': typeof PrivacyRoute
   '/_authed/audit': typeof AuthedAuditRoute
   '/_authed/invoices': typeof AuthedInvoicesRoute
@@ -139,6 +148,7 @@ export interface FileRouteTypes {
     | '/callback'
     | '/eula'
     | '/invite'
+    | '/marketing'
     | '/privacy'
     | '/audit'
     | '/invoices'
@@ -153,6 +163,7 @@ export interface FileRouteTypes {
     | '/callback'
     | '/eula'
     | '/invite'
+    | '/marketing'
     | '/privacy'
     | '/audit'
     | '/invoices'
@@ -168,6 +179,7 @@ export interface FileRouteTypes {
     | '/callback'
     | '/eula'
     | '/invite'
+    | '/marketing'
     | '/privacy'
     | '/_authed/audit'
     | '/_authed/invoices'
@@ -184,6 +196,7 @@ export interface RootRouteChildren {
   CallbackRoute: typeof CallbackRoute
   EulaRoute: typeof EulaRoute
   InviteRoute: typeof InviteRoute
+  MarketingRoute: typeof MarketingRoute
   PrivacyRoute: typeof PrivacyRoute
 }
 
@@ -194,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/privacy'
       fullPath: '/privacy'
       preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marketing': {
+      id: '/marketing'
+      path: '/marketing'
+      fullPath: '/marketing'
+      preLoaderRoute: typeof MarketingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/invite': {
@@ -312,6 +332,7 @@ const rootRouteChildren: RootRouteChildren = {
   CallbackRoute: CallbackRoute,
   EulaRoute: EulaRoute,
   InviteRoute: InviteRoute,
+  MarketingRoute: MarketingRoute,
   PrivacyRoute: PrivacyRoute,
 }
 export const routeTree = rootRouteImport

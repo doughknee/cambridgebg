@@ -166,4 +166,5 @@ def test_migration_chain_has_single_head() -> None:
     cfg = Config(str(BACKEND / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND / "alembic"))
     heads = ScriptDirectory.from_config(cfg).get_heads()
-    assert heads == ["0014_coding_option_qbo_item"]
+    # One head only; pinning the name would break on every new migration.
+    assert len(heads) == 1, heads
